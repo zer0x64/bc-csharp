@@ -3,6 +3,8 @@ using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Utilities;
 using Org.BouncyCastle.Utilities;
 using System;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading;
 
 namespace Org.BouncyCastle.Crypto.Generators
@@ -11,8 +13,6 @@ namespace Org.BouncyCastle.Crypto.Generators
     {
         private const int ARGON2_BLOCK_SIZE = 1024;
         private const int ARGON2_QWORDS_IN_BLOCK = ARGON2_BLOCK_SIZE / 8;
-
-        private const int ARGON2_ADDRESSES_IN_BLOCK = 128;
         private const int ARGON2_PREHASH_DIGEST_LENGTH = 64;
         private const int ARGON2_PREHASH_SEED_LENGTH = 72;
         private const int ARGON2_SYNC_POINTS = 4;
@@ -21,7 +21,6 @@ namespace Org.BouncyCastle.Crypto.Generators
         private const int MIN_OUTLEN = 4;
         private const int MIN_ITERATIONS = 1;
         private const long M32L = 0xFFFFFFFFL;
-        private static readonly byte[] ZERO_BYTES = new byte[4];
 
         private Argon2Parameters parameters;
         private ulong[][] memory;
@@ -89,6 +88,11 @@ namespace Org.BouncyCastle.Crypto.Generators
                 throw new ArgumentException("output length must be greater than: " + MIN_OUTLEN);
             }
 
+            if(parameters == null)
+            {
+                throw new InvalidOperationException("you need to pass parameters via the Init() method before calling this.");
+            }
+
             // Initialize internal state, memory blocks, etc.
             InitializeState(password, outputLength);
 
@@ -98,7 +102,26 @@ namespace Org.BouncyCastle.Crypto.Generators
             // Apply finalization steps to produce the output hash
             FinalizeHash(output, outputOffset, outputLength);
 
+            // Clear memory
+            Reset();
+
             return outputLength;
+        }
+
+        private void Reset()
+        {
+            if (memory != null)
+            {
+                for(int i = 0; i < memory.Length; i++)
+                {
+                    if (memory[i] != null)
+                    {
+                        Zeroize<ulong>(memory[i]);
+                    }
+                }
+            }
+
+            Arrays.Clear(tmpBlock);
         }
 
         private void InitializeState(byte[] password, int outputLength)
@@ -162,7 +185,7 @@ namespace Org.BouncyCastle.Crypto.Generators
 
             for (int i = 0; i < memorySize; i++)
             {
-                memory[i] = new ulong[ARGON2_BLOCK_SIZE / 8];
+                memory[i] = new ulong[ARGON2_QWORDS_IN_BLOCK];
             }
 
             // Fill the first memory blocks with a hash of the initial state
@@ -229,7 +252,7 @@ namespace Org.BouncyCastle.Crypto.Generators
                             if (isIndependantAddressing)
                             {
                                 // Argon2i, or the independant part of Argon2id
-                                int independantBlockAddress = currentBlock % ARGON2_ADDRESSES_IN_BLOCK;
+                                int independantBlockAddress = currentBlock % ARGON2_QWORDS_IN_BLOCK;
 
                                 if (independantBlockAddress == 0)
                                 {
@@ -256,6 +279,8 @@ namespace Org.BouncyCastle.Crypto.Generators
                                 filler.FillBlock(memory[lastBlockIndex], memory[referenceBlockIndex], memory[currentBlockIndex]);
                             }
                         }
+
+                        filler.Clear();
                     }
                 }
             }
@@ -388,9 +413,9 @@ namespace Org.BouncyCastle.Crypto.Generators
 
         private class FillerBlock
         {
-            public ulong[] rBlock = new ulong[ARGON2_ADDRESSES_IN_BLOCK];
+            public ulong[] rBlock = new ulong[ARGON2_QWORDS_IN_BLOCK];
 
-            public ulong[] zBlock = new ulong[ARGON2_ADDRESSES_IN_BLOCK];
+            public ulong[] zBlock = new ulong[ARGON2_QWORDS_IN_BLOCK];
 
             public ulong[] addressingInputBlock;
 
@@ -400,8 +425,8 @@ namespace Org.BouncyCastle.Crypto.Generators
 
             public void InitializeIndependantAddressing(int pass, int lane, int slice, int nBlocks, int nIterations, int type)
             {
-                addressingInputBlock = new ulong[ARGON2_ADDRESSES_IN_BLOCK];
-                addressingOutputBlock = new ulong[ARGON2_ADDRESSES_IN_BLOCK];
+                addressingInputBlock = new ulong[ARGON2_QWORDS_IN_BLOCK];
+                addressingOutputBlock = new ulong[ARGON2_QWORDS_IN_BLOCK];
 
                 addressingInputBlock[0] = (ulong)pass;
                 addressingInputBlock[1] = (ulong)lane;
@@ -446,6 +471,22 @@ namespace Org.BouncyCastle.Crypto.Generators
                 CopyBlock(rBlock, zBlock);
                 ApplyBlake2(zBlock);
                 XorBlocksWith(rBlock, zBlock, output);
+            }
+
+            public void Clear()
+            {
+                Zeroize<ulong>(rBlock);
+                Zeroize<ulong>(zBlock);
+
+                if (addressingInputBlock != null)
+                {
+                    Zeroize<ulong>(addressingInputBlock);
+                }
+
+                if (addressingOutputBlock != null)
+                {
+                    Zeroize<ulong>(addressingOutputBlock);
+                }
             }
 
             private static void ApplyBlake2(ulong[] input)
@@ -523,7 +564,7 @@ namespace Org.BouncyCastle.Crypto.Generators
 
             private static void XorBlocks(ulong[] x, ulong[] y, ulong[] output)
             {
-                for (int i = 0; i < ARGON2_ADDRESSES_IN_BLOCK; i++)
+                for (int i = 0; i < ARGON2_QWORDS_IN_BLOCK; i++)
                 {
                     output[i] = x[i] ^ y[i];
                 }
@@ -531,7 +572,7 @@ namespace Org.BouncyCastle.Crypto.Generators
 
             private static void XorBlocksWith(ulong[] x, ulong[] y, ulong[] output)
             {
-                for (int i = 0; i < ARGON2_ADDRESSES_IN_BLOCK; i++)
+                for (int i = 0; i < ARGON2_QWORDS_IN_BLOCK; i++)
                 {
                     output[i] ^= x[i] ^ y[i];
                 }
@@ -542,5 +583,18 @@ namespace Org.BouncyCastle.Crypto.Generators
                 Buffer.BlockCopy(input, 0, output, 0, ARGON2_BLOCK_SIZE);
             }
         }
+
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+        private static void Zeroize<T>(Span<T> buffer) where T: struct
+        {
+            Span<byte> bufferView = MemoryMarshal.AsBytes(buffer);
+            CryptographicOperations.ZeroMemory(bufferView);
+        }
+#else
+        private static void Zeroize<T>(T[] buffer)
+        {
+            Array.Clear(buffer, 0, buffer.Length);
+        }
+#endif
     }
 }

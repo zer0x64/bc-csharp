@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Org.BouncyCastle.Utilities;
+using System;
 
 namespace Org.BouncyCastle.Crypto.Parameters
 {
@@ -40,15 +41,9 @@ namespace Org.BouncyCastle.Crypto.Parameters
 
         public void Clear()
         {
-#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
-            System.Security.Cryptography.CryptographicOperations.ZeroMemory(Salt);
-            System.Security.Cryptography.CryptographicOperations.ZeroMemory(Secret);
-            System.Security.Cryptography.CryptographicOperations.ZeroMemory(Additional);
-#else
-            Array.Clear(Salt, 0, Salt.Length);
-            Array.Clear(Secret, 0, Secret.Length);
-            Array.Clear(Additional, 0, Additional.Length);
-#endif
+            Arrays.Clear(Salt);
+            Arrays.Clear(Secret);
+            Arrays.Clear(Additional);
         }
 
         public class Builder
