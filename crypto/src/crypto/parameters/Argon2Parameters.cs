@@ -1,5 +1,4 @@
 ﻿using Org.BouncyCastle.Utilities;
-using System;
 
 namespace Org.BouncyCastle.Crypto.Parameters
 {
@@ -53,11 +52,12 @@ namespace Org.BouncyCastle.Crypto.Parameters
             public int Memory { get; private set; } = 1 << DEFAULT_MEMORY_COST;
             public int Iterations { get; private set; } = DEFAULT_ITERATIONS;
             public int Parallelism { get; private set; } = DEFAULT_LANES;
-            public byte[] Salt { get; private set; } 
+            public byte[] Salt { get; private set; }
             public byte[] Secret { get; private set; }
             public byte[] Additional { get; private set; }
 
-            public Builder(int type) {
+            public Builder(int type)
+            {
                 WithType(type);
             }
 
@@ -76,6 +76,12 @@ namespace Org.BouncyCastle.Crypto.Parameters
             public Builder WithMemoryCost(int memory)
             {
                 Memory = memory;
+                return this;
+            }
+
+            public Builder WithMemoryPowOfTwo(int memory)
+            {
+                Memory = 1 << memory;
                 return this;
             }
 
@@ -116,15 +122,9 @@ namespace Org.BouncyCastle.Crypto.Parameters
 
             public void Clear()
             {
-#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
-                System.Security.Cryptography.CryptographicOperations.ZeroMemory(Salt);
-                System.Security.Cryptography.CryptographicOperations.ZeroMemory(Secret);
-                System.Security.Cryptography.CryptographicOperations.ZeroMemory(Additional);
-#else
-                Array.Clear(Salt, 0, Salt.Length);
-                Array.Clear(Secret, 0, Secret.Length);
-                Array.Clear(Additional, 0, Additional.Length);
-#endif
+                Arrays.Clear(Salt);
+                Arrays.Clear(Secret);
+                Arrays.Clear(Additional);
             }
         }
     }

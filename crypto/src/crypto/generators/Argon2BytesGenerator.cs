@@ -1,11 +1,10 @@
-﻿using Org.BouncyCastle.Crypto.Digests;
+﻿using System;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Utilities;
 using Org.BouncyCastle.Utilities;
-using System;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Threading;
 
 namespace Org.BouncyCastle.Crypto.Generators
 {
@@ -50,7 +49,7 @@ namespace Org.BouncyCastle.Crypto.Generators
             {
                 throw new ArgumentException("iterations must be greater than: " + MIN_ITERATIONS);
             }
-            else if(parameters.Version != Argon2Parameters.ARGON2_VERSION_10 && parameters.Version != Argon2Parameters.ARGON2_VERSION_13)
+            else if (parameters.Version != Argon2Parameters.ARGON2_VERSION_10 && parameters.Version != Argon2Parameters.ARGON2_VERSION_13)
             {
                 throw new NotSupportedException("unknown Argon2 version");
             }
@@ -83,12 +82,12 @@ namespace Org.BouncyCastle.Crypto.Generators
 
         public int GenerateBytes(byte[] password, byte[] output, int outputOffset, int outputLength)
         {
-            if(outputLength < MIN_OUTLEN)
+            if (outputLength < MIN_OUTLEN)
             {
                 throw new ArgumentException("output length must be greater than: " + MIN_OUTLEN);
             }
 
-            if(parameters == null)
+            if (parameters == null)
             {
                 throw new InvalidOperationException("you need to pass parameters via the Init() method before calling this.");
             }
@@ -112,7 +111,7 @@ namespace Org.BouncyCastle.Crypto.Generators
         {
             if (memory != null)
             {
-                for(int i = 0; i < memory.Length; i++)
+                for (int i = 0; i < memory.Length; i++)
                 {
                     if (memory[i] != null)
                     {
@@ -585,7 +584,7 @@ namespace Org.BouncyCastle.Crypto.Generators
         }
 
 #if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
-        private static void Zeroize<T>(Span<T> buffer) where T: struct
+        private static void Zeroize<T>(Span<T> buffer) where T : struct
         {
             Span<byte> bufferView = MemoryMarshal.AsBytes(buffer);
             CryptographicOperations.ZeroMemory(bufferView);
