@@ -45,9 +45,9 @@ namespace Org.BouncyCastle.Crypto.Parameters
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(Secret);
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(Additional);
 #else
-                Array.Clear(Salt, 0, Salt.Length);
-                Array.Clear(Secret, 0, Secret.Length);
-                Array.Clear(Additional, 0, Additional.Length);
+            Array.Clear(Salt, 0, Salt.Length);
+            Array.Clear(Secret, 0, Secret.Length);
+            Array.Clear(Additional, 0, Additional.Length);
 #endif
         }
 
@@ -55,7 +55,7 @@ namespace Org.BouncyCastle.Crypto.Parameters
         {
             public int Type { get; private set; } = DEFAULT_TYPE;
             public int Version { get; private set; } = DEFAULT_VERSION;
-            public int Memory { get; private set; } = DEFAULT_MEMORY_COST;
+            public int Memory { get; private set; } = 1 << DEFAULT_MEMORY_COST;
             public int Iterations { get; private set; } = DEFAULT_ITERATIONS;
             public int Parallelism { get; private set; } = DEFAULT_LANES;
             public byte[] Salt { get; private set; } 

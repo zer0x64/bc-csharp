@@ -3,45 +3,12 @@ using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Utilities;
 using Org.BouncyCastle.Utilities;
 using System;
+using System.Threading;
 
 namespace Org.BouncyCastle.Crypto.Generators
 {
     public class Argon2BytesGenerator
     {
-        private Argon2Parameters parameters;
-
-        public Argon2BytesGenerator() { }
-
-        public void Init(Argon2Parameters parameters)
-        {
-            this.parameters = parameters;
-        }
-
-        public int GenerateBytes(byte[] password, byte[] output)
-        {
-            return GenerateBytes(password, output, 0, output.Length);
-        }
-
-        public int GenerateBytes(byte[] password, byte[] output, int outputOffset, int outputLength)
-        {
-            // Argon2 hashing logic
-            Argon2 argon2 = new Argon2(parameters);
-            argon2.Hash(password, output, outputOffset, outputLength);
-
-            return outputLength;
-        }
-    }
-
-    public class Argon2
-    {
-        private readonly Argon2Parameters parameters;
-        private ulong[][] memory;
-
-        private readonly byte[] tmpBlock = new byte[ARGON2_BLOCK_SIZE];
-        private readonly int memorySize;
-        private readonly int laneSize;
-        private readonly int sliceSize;
-
         private const int ARGON2_BLOCK_SIZE = 1024;
         private const int ARGON2_QWORDS_IN_BLOCK = ARGON2_BLOCK_SIZE / 8;
 
@@ -56,17 +23,72 @@ namespace Org.BouncyCastle.Crypto.Generators
         private const long M32L = 0xFFFFFFFFL;
         private static readonly byte[] ZERO_BYTES = new byte[4];
 
-        public Argon2(Argon2Parameters parameters)
-        {
-            this.parameters = parameters;
+        private Argon2Parameters parameters;
+        private ulong[][] memory;
 
-            memorySize = 4 * parameters.Parallelism * (parameters.Memory / (4 * parameters.Parallelism));
-            laneSize = memorySize / parameters.Parallelism;
-            sliceSize = laneSize / ARGON2_SYNC_POINTS;
+        private readonly byte[] tmpBlock = new byte[ARGON2_BLOCK_SIZE];
+        private int memorySize;
+        private int laneSize;
+        private int sliceSize;
+
+        public Argon2BytesGenerator() { }
+
+        public void Init(Argon2Parameters parameters)
+        {
+            if (parameters.Parallelism < MIN_PARALLELISM)
+            {
+                throw new ArgumentException("lanes must be greater than " + MIN_PARALLELISM);
+            }
+            else if (parameters.Parallelism > MAX_PARALLELISM)
+            {
+                throw new ArgumentException("lanes must be less than " + MAX_PARALLELISM);
+            }
+            else if (parameters.Memory < 2 * ARGON2_SYNC_POINTS)
+            {
+                throw new ArgumentException("memory must be greater than: " + 2 * ARGON2_SYNC_POINTS);
+            }
+            else if (parameters.Iterations < MIN_ITERATIONS)
+            {
+                throw new ArgumentException("iterations must be greater than: " + MIN_ITERATIONS);
+            }
+            else if(parameters.Version != Argon2Parameters.ARGON2_VERSION_10 && parameters.Version != Argon2Parameters.ARGON2_VERSION_13)
+            {
+                throw new NotSupportedException("unknown Argon2 version");
+            }
+            else if (parameters.Type != Argon2Parameters.ARGON2_d && parameters.Type != Argon2Parameters.ARGON2_i && parameters.Type != Argon2Parameters.ARGON2_id)
+            {
+                throw new NotSupportedException("unknown Argon2 type");
+            }
+
+            this.parameters = parameters;
+            memorySize = parameters.Memory;
+
+            // 2. Align memory size
+            // Minimum memory_blocks = 8L blocks, where L is the number of lanes
+            if (memorySize < 2 * ARGON2_SYNC_POINTS * parameters.Parallelism)
+            {
+                memorySize = 2 * ARGON2_SYNC_POINTS * parameters.Parallelism;
+            }
+
+            sliceSize = memorySize / (parameters.Parallelism * ARGON2_SYNC_POINTS);
+            laneSize = sliceSize * ARGON2_SYNC_POINTS;
+
+            // Ensure that all segments have equal length
+            memorySize = laneSize * parameters.Parallelism;
         }
 
-        public void Hash(byte[] password, byte[] output, int outputOffset, int outputLength)
+        public int GenerateBytes(byte[] password, byte[] output)
         {
+            return GenerateBytes(password, output, 0, output.Length);
+        }
+
+        public int GenerateBytes(byte[] password, byte[] output, int outputOffset, int outputLength)
+        {
+            if(outputLength < MIN_OUTLEN)
+            {
+                throw new ArgumentException("output length must be greater than: " + MIN_OUTLEN);
+            }
+
             // Initialize internal state, memory blocks, etc.
             InitializeState(password, outputLength);
 
@@ -75,6 +97,8 @@ namespace Org.BouncyCastle.Crypto.Generators
 
             // Apply finalization steps to produce the output hash
             FinalizeHash(output, outputOffset, outputLength);
+
+            return outputLength;
         }
 
         private void InitializeState(byte[] password, int outputLength)
@@ -147,7 +171,7 @@ namespace Org.BouncyCastle.Crypto.Generators
                 Pack.UInt32_To_LE(i, tmpBlock, ARGON2_PREHASH_DIGEST_LENGTH + sizeof(int));
 
                 byte[] tmpOut = new byte[ARGON2_BLOCK_SIZE];
-                ExtendedHash(tmpBlock, 0, ARGON2_PREHASH_DIGEST_LENGTH + 2 * sizeof(int), tmpOut, 0, ARGON2_BLOCK_SIZE);
+                ExtendedHash(tmpBlock, 0, ARGON2_PREHASH_SEED_LENGTH, tmpOut, 0, ARGON2_BLOCK_SIZE);
 
                 Pack.LE_To_UInt64(tmpOut, 0, memory[i * laneSize]);
             }
@@ -159,7 +183,7 @@ namespace Org.BouncyCastle.Crypto.Generators
                 Pack.UInt32_To_LE(i, tmpBlock, ARGON2_PREHASH_DIGEST_LENGTH + sizeof(int));
 
                 byte[] tmpOut = new byte[ARGON2_BLOCK_SIZE];
-                ExtendedHash(tmpBlock, 0, ARGON2_PREHASH_DIGEST_LENGTH + 2 * sizeof(int), tmpOut, 0, ARGON2_BLOCK_SIZE);
+                ExtendedHash(tmpBlock, 0, ARGON2_PREHASH_SEED_LENGTH, tmpOut, 0, ARGON2_BLOCK_SIZE);
 
                 Pack.LE_To_UInt64(tmpOut, 0, memory[i * laneSize + 1]);
             }

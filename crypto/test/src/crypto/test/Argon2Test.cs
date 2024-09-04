@@ -5,7 +5,7 @@ using Org.BouncyCastle.Utilities.Encoders;
 using Org.BouncyCastle.Utilities.Test;
 using System;
 
-namespace Org.BouncyCastle.Crypto.Test
+namespace Org.BouncyCastle.Crypto.Tests
 {
     public class Argon2Test: SimpleTest
     {
