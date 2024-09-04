@@ -1,10 +1,14 @@
 ﻿using System;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
+
 using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Utilities;
 using Org.BouncyCastle.Utilities;
+
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+#endif
 
 namespace Org.BouncyCastle.Crypto.Generators
 {
@@ -24,7 +28,6 @@ namespace Org.BouncyCastle.Crypto.Generators
         private Argon2Parameters parameters;
         private ulong[][] memory;
 
-        private readonly byte[] tmpBlock = new byte[ARGON2_BLOCK_SIZE];
         private int memorySize;
         private int laneSize;
         private int sliceSize;
@@ -93,10 +96,10 @@ namespace Org.BouncyCastle.Crypto.Generators
             }
 
             // Initialize internal state, memory blocks, etc.
-            InitializeState(password, outputLength);
+            byte[] seed = InitializeState(password, outputLength);
 
             // Perform the filling of memory blocks with Argon2 function logic
-            FillMemory();
+            FillMemory(seed);
 
             // Apply finalization steps to produce the output hash
             FinalizeHash(output, outputOffset, outputLength);
@@ -119,12 +122,12 @@ namespace Org.BouncyCastle.Crypto.Generators
                     }
                 }
             }
-
-            Arrays.Clear(tmpBlock);
         }
 
-        private void InitializeState(byte[] password, int outputLength)
+        private byte[] InitializeState(byte[] password, int outputLength)
         {
+            byte[] seed = new byte[ARGON2_PREHASH_SEED_LENGTH];
+
             Blake2bDigest blake2b = new Blake2bDigest(ARGON2_PREHASH_DIGEST_LENGTH * 8);
 
             byte[] lanes = Pack.UInt32_To_LE((uint)parameters.Parallelism);
@@ -175,10 +178,40 @@ namespace Org.BouncyCastle.Crypto.Generators
                 blake2b.BlockUpdate(parameters.Additional, 0, parameters.Additional.Length);
             }
 
-            blake2b.DoFinal(tmpBlock, 0);
+            blake2b.DoFinal(seed, 0);
+
+            return seed;
         }
 
-        private void FillMemory()
+        private void InitializeFirstBlocks(byte[] seed, int offset)
+        {
+            // Fill the first memory blocks with a hash of the initial state
+            for (uint i = 0; i < parameters.Parallelism; i++)
+            {
+                Pack.UInt32_To_LE(i, seed, ARGON2_PREHASH_DIGEST_LENGTH + sizeof(int));
+
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+                // If the platform supports it and is little endian, we can cast the array as a byte array directly
+                if (BitConverter.IsLittleEndian)
+                {
+                    Span<byte> memorySpan = MemoryMarshal.AsBytes(memory[i * laneSize + offset].AsSpan());
+
+                    ExtendedHash(seed.AsSpan()[..ARGON2_PREHASH_SEED_LENGTH], memorySpan);
+                }
+                else
+#endif
+                {
+                    byte[] tmpOut = new byte[ARGON2_BLOCK_SIZE];
+
+                    ExtendedHash(seed, 0, ARGON2_PREHASH_SEED_LENGTH, tmpOut, 0, ARGON2_BLOCK_SIZE);
+
+                    Pack.LE_To_UInt64(tmpOut, 0, memory[i * laneSize + offset]);
+                    Arrays.Clear(tmpOut);
+                }
+            }
+        }
+
+        private void FillMemory(byte[] seed)
         {
             memory = new ulong[memorySize][];
 
@@ -187,28 +220,11 @@ namespace Org.BouncyCastle.Crypto.Generators
                 memory[i] = new ulong[ARGON2_QWORDS_IN_BLOCK];
             }
 
-            // Fill the first memory blocks with a hash of the initial state
-            for (uint i = 0; i < parameters.Parallelism; i++)
-            {
-                Pack.UInt32_To_LE(i, tmpBlock, ARGON2_PREHASH_DIGEST_LENGTH + sizeof(int));
+            InitializeFirstBlocks(seed, 0);
+            seed[ARGON2_PREHASH_DIGEST_LENGTH] = 1;
+            InitializeFirstBlocks(seed, 1);
 
-                byte[] tmpOut = new byte[ARGON2_BLOCK_SIZE];
-                ExtendedHash(tmpBlock, 0, ARGON2_PREHASH_SEED_LENGTH, tmpOut, 0, ARGON2_BLOCK_SIZE);
-
-                Pack.LE_To_UInt64(tmpOut, 0, memory[i * laneSize]);
-            }
-
-            // Fill the second memory blocks with a hash of the initial state
-            tmpBlock[ARGON2_PREHASH_DIGEST_LENGTH] = 1;
-            for (uint i = 0; i < parameters.Parallelism; i++)
-            {
-                Pack.UInt32_To_LE(i, tmpBlock, ARGON2_PREHASH_DIGEST_LENGTH + sizeof(int));
-
-                byte[] tmpOut = new byte[ARGON2_BLOCK_SIZE];
-                ExtendedHash(tmpBlock, 0, ARGON2_PREHASH_SEED_LENGTH, tmpOut, 0, ARGON2_BLOCK_SIZE);
-
-                Pack.LE_To_UInt64(tmpOut, 0, memory[i * laneSize + 1]);
-            }
+            Arrays.Clear(seed);
 
             // Fill in the remaining blocks
             for (int pass = 0; pass < parameters.Iterations; pass++)
@@ -350,13 +366,35 @@ namespace Org.BouncyCastle.Crypto.Generators
                 }
             }
 
-            Pack.UInt64_To_LE(accumulator, tmpBlock, 0);
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+            // If the platform supports it and is little endian, we can cast the array as a byte array directly
+            if (BitConverter.IsLittleEndian)
+            {
+                Span<byte> accumulatorBytes = MemoryMarshal.AsBytes(accumulator.AsSpan());
+                ExtendedHash(accumulatorBytes, output.AsSpan()[outputOffset..(outputOffset + outputLength)]);
+            }
+            else
+#endif
+            {
+                byte[] accumulatorBytes = new byte[ARGON2_BLOCK_SIZE];
+                Pack.UInt64_To_LE(accumulator, accumulatorBytes, 0);
+                ExtendedHash(accumulatorBytes, 0, ARGON2_BLOCK_SIZE, output, outputOffset, outputLength);
 
-            ExtendedHash(tmpBlock, 0, ARGON2_BLOCK_SIZE, output, outputOffset, outputLength);
+                Arrays.Clear(accumulatorBytes);
+            }
         }
 
         private static void ExtendedHash(byte[] input, int inputOffset, int inputLength, byte[] output, int outputOffset, int outputLength)
         {
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+            ExtendedHash(input.AsSpan()[inputOffset..(inputOffset + inputLength)], output.AsSpan()[outputOffset..(outputOffset + outputLength)]);
+        }
+
+        private static void ExtendedHash(ReadOnlySpan<byte> input, Span<byte> output)
+        {
+            int outputLength = output.Length;
+            int outputOffset = 0;
+#endif
             const int BLAKE2B_DIGEST_LENGTH = 64;
             const int HALF_BLAKE2B_DIGEST_LENGTH = BLAKE2B_DIGEST_LENGTH / 2;
 
@@ -372,9 +410,14 @@ namespace Org.BouncyCastle.Crypto.Generators
                 Blake2bDigest blake = new Blake2bDigest(outputLength * 8);
 
                 blake.BlockUpdate(outputLengthBytes, 0, outputLengthBytes.Length);
-                blake.BlockUpdate(input, inputOffset, inputLength);
 
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+                blake.BlockUpdate(input);
+                blake.DoFinal(output);
+#else
+                blake.BlockUpdate(input, inputOffset, inputLength);
                 blake.DoFinal(output, outputOffset);
+#endif
             }
             else
             {
@@ -383,12 +426,16 @@ namespace Org.BouncyCastle.Crypto.Generators
 
                 // V1
                 blake.BlockUpdate(outputLengthBytes, 0, outputLengthBytes.Length);
-                blake.BlockUpdate(input, inputOffset, inputLength);
 
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+                blake.BlockUpdate(input);
                 blake.DoFinal(outBuffer, 0);
-
+                outBuffer[0..HALF_BLAKE2B_DIGEST_LENGTH].CopyTo(output);
+#else
+                blake.BlockUpdate(input, inputOffset, inputLength);
+                blake.DoFinal(outBuffer, 0);
                 Buffer.BlockCopy(outBuffer, 0, output, outputOffset, HALF_BLAKE2B_DIGEST_LENGTH);
-
+#endif
                 int rounds = (outputLength + 31) / 32 - 2;
                 int outputPosition = outputOffset + HALF_BLAKE2B_DIGEST_LENGTH;
 
@@ -399,14 +446,22 @@ namespace Org.BouncyCastle.Crypto.Generators
 
                     blake.DoFinal(outBuffer, 0);
 
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+                    outBuffer[0..HALF_BLAKE2B_DIGEST_LENGTH].CopyTo(output[outputPosition..]);
+#else
                     Buffer.BlockCopy(outBuffer, 0, output, outputPosition, HALF_BLAKE2B_DIGEST_LENGTH);
+#endif
                 }
 
                 // Vr+1
                 Blake2bDigest finalBlake = new Blake2bDigest((outputLength - 32 * rounds) * 8);
                 finalBlake.BlockUpdate(outBuffer, 0, BLAKE2B_DIGEST_LENGTH);
 
+#if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+                finalBlake.DoFinal(output[outputPosition..]);
+#else
                 finalBlake.DoFinal(output, outputPosition);
+#endif
             }
         }
 
