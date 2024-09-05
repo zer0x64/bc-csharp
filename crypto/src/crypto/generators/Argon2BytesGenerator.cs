@@ -4,6 +4,7 @@ using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Utilities;
 using Org.BouncyCastle.Utilities;
+using System.Threading.Tasks;
 
 #if NETCOREAPP2_1_OR_GREATER || NETSTANDARD2_1_OR_GREATER
 using System.Runtime.InteropServices;
@@ -231,10 +232,24 @@ namespace Org.BouncyCastle.Crypto.Generators
             {
                 for (int slice = 0; slice < ARGON2_SYNC_POINTS; slice++)
                 {
-                    // TODO: Multithread this
-                    for (int lane = 0; lane < parameters.Parallelism; lane++)
+                    if (parameters.Parallelism <= 1)
                     {
-                        FillSegment(pass, slice, lane);
+                        // We don't need to multithread if there's only one lane
+                        FillSegment(pass, slice, 0);
+                    }
+                    else
+                    {
+                        Task[] tasks = new Task[parameters.Parallelism];
+
+                        for (int lane = 0; lane < parameters.Parallelism; lane++)
+                        {
+                            // This line copies the lane value so it doesn't get modified before the Task run.
+                            // Don't delete this
+                            int currentLane = lane;
+                            tasks[lane] = Task.Run(() => FillSegment(pass, slice, currentLane));
+                        }
+
+                        Task.WaitAll(tasks);
                     }
                 }
             }
