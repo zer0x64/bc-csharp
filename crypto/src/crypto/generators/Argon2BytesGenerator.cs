@@ -234,71 +234,76 @@ namespace Org.BouncyCastle.Crypto.Generators
                     // TODO: Multithread this
                     for (int lane = 0; lane < parameters.Parallelism; lane++)
                     {
-                        bool isIndependantAddressing = parameters.Type == Argon2Parameters.ARGON2_i ||
-                            (parameters.Type == Argon2Parameters.ARGON2_id && pass == 0 && slice < 2);
-
-                        // There is one working state per thread
-                        FillerBlock filler = new FillerBlock();
-
-                        if (isIndependantAddressing)
-                        {
-                            filler.InitializeIndependantAddressing(pass, lane, slice, memory.Length, parameters.Iterations, parameters.Type);
-                        }
-
-                        // We skip the first two blocks on first pass because they are already seeded
-                        for (int currentBlock = pass == 0 && slice == 0 ? 2 : 0; currentBlock < laneSize / ARGON2_SYNC_POINTS; currentBlock++)
-                        {
-                            int currentBlockIndex = lane * laneSize + slice * sliceSize + currentBlock;
-                            int lastBlockIndex;
-
-                            if (currentBlockIndex % laneSize == 0)
-                            {
-                                /* Last block in this lane */
-                                lastBlockIndex = currentBlockIndex + laneSize - 1;
-                            }
-                            else
-                            {
-                                /* Previous block */
-                                lastBlockIndex = currentBlockIndex - 1;
-                            }
-
-                            ulong j;
-
-                            if (isIndependantAddressing)
-                            {
-                                // Argon2i, or the independant part of Argon2id
-                                int independantBlockAddress = currentBlock % ARGON2_QWORDS_IN_BLOCK;
-
-                                if (independantBlockAddress == 0)
-                                {
-                                    filler.GenerateNextAddressingBlock();
-                                }
-
-                                j = filler.addressingOutputBlock[independantBlockAddress];
-                            }
-                            else
-                            {
-                                // Argon2d, or the dependant part of Argon2d
-                                j = memory[lastBlockIndex][0];
-                            }
-
-                            int referenceBlockIndex = GetReferenceBlockIndex(pass, lane, slice, currentBlock, j);
-
-                            // Apply G function (mixing function)
-                            if (pass > 0 && parameters.Version == Argon2Parameters.ARGON2_VERSION_13)
-                            {
-                                filler.FillBlockWithXor(memory[lastBlockIndex], memory[referenceBlockIndex], memory[currentBlockIndex]);
-                            }
-                            else
-                            {
-                                filler.FillBlock(memory[lastBlockIndex], memory[referenceBlockIndex], memory[currentBlockIndex]);
-                            }
-                        }
-
-                        filler.Clear();
+                        FillSegment(pass, slice, lane);
                     }
                 }
             }
+        }
+
+        private void FillSegment(int pass, int slice, int lane)
+        {
+            bool isIndependantAddressing = parameters.Type == Argon2Parameters.ARGON2_i ||
+                                        (parameters.Type == Argon2Parameters.ARGON2_id && pass == 0 && slice < 2);
+
+            // There is one working state per thread
+            FillerBlock filler = new FillerBlock();
+
+            if (isIndependantAddressing)
+            {
+                filler.InitializeIndependantAddressing(pass, lane, slice, memory.Length, parameters.Iterations, parameters.Type);
+            }
+
+            // We skip the first two blocks on first pass because they are already seeded
+            for (int currentBlock = pass == 0 && slice == 0 ? 2 : 0; currentBlock < laneSize / ARGON2_SYNC_POINTS; currentBlock++)
+            {
+                int currentBlockIndex = lane * laneSize + slice * sliceSize + currentBlock;
+                int lastBlockIndex;
+
+                if (currentBlockIndex % laneSize == 0)
+                {
+                    /* Last block in this lane */
+                    lastBlockIndex = currentBlockIndex + laneSize - 1;
+                }
+                else
+                {
+                    /* Previous block */
+                    lastBlockIndex = currentBlockIndex - 1;
+                }
+
+                ulong j;
+
+                if (isIndependantAddressing)
+                {
+                    // Argon2i, or the independant part of Argon2id
+                    int independantBlockAddress = currentBlock % ARGON2_QWORDS_IN_BLOCK;
+
+                    if (independantBlockAddress == 0)
+                    {
+                        filler.GenerateNextAddressingBlock();
+                    }
+
+                    j = filler.addressingOutputBlock[independantBlockAddress];
+                }
+                else
+                {
+                    // Argon2d, or the dependant part of Argon2d
+                    j = memory[lastBlockIndex][0];
+                }
+
+                int referenceBlockIndex = GetReferenceBlockIndex(pass, lane, slice, currentBlock, j);
+
+                // Apply G function (mixing function)
+                if (pass > 0 && parameters.Version == Argon2Parameters.ARGON2_VERSION_13)
+                {
+                    filler.FillBlockWithXor(memory[lastBlockIndex], memory[referenceBlockIndex], memory[currentBlockIndex]);
+                }
+                else
+                {
+                    filler.FillBlock(memory[lastBlockIndex], memory[referenceBlockIndex], memory[currentBlockIndex]);
+                }
+            }
+
+            filler.Clear();
         }
 
         private int GetReferenceBlockIndex(int pass, int lane, int slice, int currentBlock, ulong j)
